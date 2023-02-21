@@ -12,16 +12,16 @@ from sqlalchemy import create_engine, URL
 from sqlalchemy.types import Date, Integer, String
 from tabulate import tabulate
 
-from models import create_tables, Table
+from models import create_tables
 from queries import query
 from utils import get_two_dates
 
-DB_USER = os.getenv("DB_USER", os.getenv("USER", "postgres"))
+DB_USER = os.getenv("DB_USER", "postgres")
 DB_PASS = os.getenv("DB_PASS", "")
 DB_HOST = os.getenv("DB_HOST", "localhost")
 DB_NAME = os.getenv("DB_NAME", "postgres")
 
-url = URl.create(
+url = URL.create(
     "postgresql+psycopg2",
     username=DB_USER,
     password=DB_PASS,
@@ -102,9 +102,20 @@ def parse_table(filename: str) -> pd.DataFrame:
 
     # И вот теперь мы наконец-то можем добавить столбцы fact и forecast. При
     # этом таблица станет в 2 раза короче.
-    forecast = deepcopy(df["value"][len(df) // 2 :])
-    df = df.iloc[: len(df) // 2, :].rename(columns={"value": "fact"})
-    df["forecast"] = forecast.tolist()
+    forecast = (
+        df["value"][len(df) // 4 : len(df) // 2].tolist()
+        + df["value"][3 * len(df) // 4 :].tolist()
+    )
+
+    df = pd.concat(
+        [
+            df.iloc[: len(df) // 4, :],
+            df.iloc[len(df) // 2 : 3 * len(df) // 4, :],
+        ]
+    ).rename(columns={"value": "fact"})
+
+    df["forecast"] = forecast
+    df.index = np.arange(1, len(df) + 1)
 
     # Заменяем даты на сегодняшнюю и любую другую этого месяца.
     data1, data2 = get_two_dates()
@@ -127,8 +138,10 @@ def main(filename: str) -> None:
 
     with engine.connect() as connection:
         df.to_sql(
-            "table",
+            "data",
             connection,
+            if_exists="append",
+            index_label="id",
             dtype={
                 "company": String(),
                 "metric": String(),
@@ -139,7 +152,9 @@ def main(filename: str) -> None:
         )
         connection.commit()
         result = connection.execute(query)
-        print(tabulate(result.fetchall(), headers=result.keys(), tablefmt="psql"))
+        print(
+            tabulate(result.fetchall(), headers=result.keys(), tablefmt="psql")
+        )
 
 
 if __name__ == "__main__":
@@ -148,7 +163,10 @@ if __name__ == "__main__":
     )
 
     parser.add_argument(
-        "filename", nargs="?", default="table.xlsx", help="Excel-файл для парсинга"
+        "filename",
+        nargs="?",
+        default="table.xlsx",
+        help="Excel-файл для парсинга",
     )
 
     args = parser.parse_args()
